@@ -5,15 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/luraproject/lura/v2/config"
 	"github.com/luraproject/lura/v2/logging"
 	"github.com/luraproject/lura/v2/proxy"
-	"github.com/xeipuuv/gojsonschema"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 const Namespace = "github.com/devopsfaith/krakend-jsonschema"
@@ -28,21 +26,24 @@ func ProxyFactory(logger logging.Logger, pf proxy.Factory) proxy.FactoryFunc {
 		if err != nil {
 			return proxy.NoopProxy, err
 		}
-		schemaLoader, ok := configGetter(cfg.ExtraConfig).(gojsonschema.JSONLoader)
-		if !ok || schemaLoader == nil {
+		jschema := configGetter(cfg.ExtraConfig)
+		if jschema == nil {
 			return next, nil
 		}
-		schema, err := gojsonschema.NewSchema(schemaLoader)
+
+		c := jsonschema.NewCompiler()
+		c.AddResource("./schema.json", jschema)
+		s, err := c.Compile("./schema.json")
 		if err != nil {
 			logger.Error("[ENDPOINT: " + cfg.Endpoint + "][JSONSchema] Parsing the definition:" + err.Error())
 			return next, nil
 		}
 		logger.Debug("[ENDPOINT: " + cfg.Endpoint + "][JSONSchema] Validator enabled")
-		return newProxy(schema, next), nil
+		return newProxy(s, next), nil
 	})
 }
 
-func newProxy(schema *gojsonschema.Schema, next proxy.Proxy) proxy.Proxy {
+func newProxy(schema *jsonschema.Schema, next proxy.Proxy) proxy.Proxy {
 	return func(ctx context.Context, r *proxy.Request) (*proxy.Response, error) {
 		if r.Body == nil {
 			return nil, ErrEmptyBody
@@ -57,12 +58,14 @@ func newProxy(schema *gojsonschema.Schema, next proxy.Proxy) proxy.Proxy {
 		}
 		r.Body = io.NopCloser(bytes.NewBuffer(body))
 
-		result, err := schema.Validate(gojsonschema.NewBytesLoader(body))
+		b, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
 		if err != nil {
 			return nil, &malformedError{err: err}
 		}
-		if !result.Valid() {
-			return nil, &validationError{errs: result.Errors()}
+
+		err = schema.Validate(b)
+		if err != nil {
+			return nil, &validationError{error: err}
 		}
 
 		return next(ctx, r)
@@ -78,19 +81,15 @@ func configGetter(cfg config.ExtraConfig) interface{} {
 	if err := json.NewEncoder(buf).Encode(v); err != nil {
 		return nil
 	}
-	return gojsonschema.NewBytesLoader(buf.Bytes())
+	schema, err := jsonschema.UnmarshalJSON(buf)
+	if err != nil {
+		return nil
+	}
+	return schema
 }
 
 type validationError struct {
-	errs []gojsonschema.ResultError
-}
-
-func (v *validationError) Error() string {
-	errs := make([]string, len(v.errs))
-	for i, desc := range v.errs {
-		errs[i] = fmt.Sprintf("- %s", desc)
-	}
-	return strings.Join(errs, "\n")
+	error
 }
 
 func (*validationError) StatusCode() int {

@@ -80,7 +80,7 @@ func TestProxyFactory_schemaInvalidBypass(t *testing.T) {
 }
 
 func TestProxyFactory_validationFail(t *testing.T) {
-	errExpected := "- (root): Invalid type. Expected:"
+	errExpected := "- at '': got object, want"
 	pf := ProxyFactory(logging.NoOp, proxy.FactoryFunc(func(cfg *config.EndpointConfig) (proxy.Proxy, error) {
 		return func(_ context.Context, _ *proxy.Request) (*proxy.Response, error) {
 			t.Error("proxy called!")
