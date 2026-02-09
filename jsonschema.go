@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/luraproject/lura/v2/config"
 	"github.com/luraproject/lura/v2/logging"
@@ -90,6 +91,16 @@ func configGetter(cfg config.ExtraConfig) interface{} {
 
 type validationError struct {
 	error
+}
+
+func (v *validationError) Error() string {
+	s := v.error.Error()
+	if strings.HasPrefix(s, "jsonschema validation failed with") {
+		if ss := strings.SplitN(s, "\n", 2); len(ss) == 2 {
+			return ss[1]
+		}
+	}
+	return s
 }
 
 func (*validationError) StatusCode() int {

@@ -120,6 +120,52 @@ func TestProxyFactory_validationFail(t *testing.T) {
 	}
 }
 
+func TestProxyFactory_validationFailMultipleErrors(t *testing.T) {
+	pf := ProxyFactory(logging.NoOp, proxy.FactoryFunc(func(_ *config.EndpointConfig) (proxy.Proxy, error) {
+		return func(_ context.Context, _ *proxy.Request) (*proxy.Response, error) {
+			t.Error("proxy called!")
+			return nil, nil
+		}, nil
+	}))
+
+	cfg := map[string]interface{}{}
+	if err := json.Unmarshal([]byte(`{
+			"type": "object",
+			"required": ["a","b"],
+			"properties": {
+				"a": {"type": "string"},
+				"b": {
+					"type": "object",
+					"required": ["c"],
+					"properties": {
+						"c": {"type": "string"}
+					}
+				}
+			}
+		}`), &cfg); err != nil {
+		t.Error(err)
+		return
+	}
+	p, err := pf.New(&config.EndpointConfig{
+		ExtraConfig: map[string]interface{}{
+			Namespace: cfg,
+		},
+	})
+	if err != nil {
+		t.Errorf("unexpected error %s", err.Error())
+		return
+	}
+	_, err = p(context.Background(), &proxy.Request{Body: io.NopCloser(bytes.NewBufferString(`{"a":1,"b":{}}`))})
+	if err == nil {
+		t.Error("expecting error")
+		return
+	}
+	if err.Error() != `- at '/a': got number, want string
+- at '/b': missing property 'c'` {
+		t.Errorf("unexpected error %s", err.Error())
+	}
+}
+
 func TestProxyFactory_validationOK(t *testing.T) {
 	errExpected := errors.New("proxy called")
 	pf := ProxyFactory(logging.NoOp, proxy.FactoryFunc(func(cfg *config.EndpointConfig) (proxy.Proxy, error) {
